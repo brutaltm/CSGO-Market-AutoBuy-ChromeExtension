@@ -1,0 +1,38 @@
+{
+    "name": "CSGO Market AutoBuy",
+    "description": "Auto buy item with certain float/price",
+    "version": "1.0",
+    "manifest_version": 3,
+    "background": {
+        "service_worker": "background.js"
+    },
+    "content_scripts": [
+        {
+            "matches": ["https://steamcommunity.com/market/listings/*"],
+            "js": ["foreground.js"]
+        }
+    ],
+    "web_accessible_resources": [{
+        "resources": ["getVariables.js"],
+        "matches": ["<all_urls>"]
+    }],
+    "permissions": ["storage", "tabs", "activeTab", "scripting"],
+    "action": {
+        "default_popup": "options.html",
+        "default_icon": {
+            "16": "/images/get_started16.png",
+            "32": "/images/get_started32.png",
+            "48": "/images/get_started48.png",
+            "128": "/images/get_started128.png"
+        }
+    },
+    "icons": {
+        "16": "/images/get_started16.png",
+        "32": "/images/get_started32.png",
+        "48": "/images/get_started48.png",
+        "128": "/images/get_started128.png"
+    },
+    "host_permissions": [
+        "https://api.csgofloat.com/*"
+    ]
+  }
