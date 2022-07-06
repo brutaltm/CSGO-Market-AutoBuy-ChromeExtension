@@ -7,10 +7,10 @@ injectScript();
 
 function refreshListings() {
     console.log("Refreshing listings...");
-    fetch(`${window.location.href}/render/?count=${listingsCount}&country=PL&currency=6&language=polish&query=&start=0`)
+    fetch(`${window.location.href}/render/?${searchParams}`)
     .then(resp => resp.json()).then(json => {
         for(const prop in json.listinginfo) {
-            if (!listings[prop] && json.listinginfo[prop].converted_price*1.15 < maxPrice) {
+            if (!listings[prop] && json.listinginfo[prop].converted_price+json.listinginfo[prop].converted_fee < maxPrice) {
                 chrome.runtime.sendMessage({
                     inspectLink: json.listinginfo[prop].asset.market_actions[0].link.replace(/%listingid%|%assetid%/gi,m => m.charAt(1) == 'l' ? prop : json.listinginfo[prop].asset.id)
                 }, resp => {
@@ -22,14 +22,17 @@ function refreshListings() {
         }
     });
 }
-
+/**
+ * 
+ * @param {string[]} queue 
+ */
 function refreshListingsV2(queue = []) {
     console.log("Refreshing listings...");
-    fetch(`${window.location.href}/render/?count=${listingsCount}&country=PL&currency=6&language=polish&query=&start=0`)
+    fetch(`${window.location.href}/render/?${searchParams}`)
     .then(resp => resp.json()).then(json => {
         let promises = [];
         for(const prop in json.listinginfo) {
-            if (!listings[prop] && json.listinginfo[prop].converted_price*1.15 < maxPrice) {
+            if (!listings[prop] && json.listinginfo[prop].converted_price+json.listinginfo[prop].converted_fee < maxPrice) {
                 promises.push(new Promise(resolve => {
                     chrome.runtime.sendMessage({
                         inspectLink: json.listinginfo[prop].asset.market_actions[0].link.replace(/%listingid%|%assetid%/gi,m => m.charAt(1) == 'l' ? prop : json.listinginfo[prop].asset.id)
@@ -58,21 +61,24 @@ async function startInterval() {
 
     if(document.querySelector('input[name="extWhichToBuy"]:checked').value == "first") {
         for(const prop in listings)
-            if (listings[prop].price*1.15 < maxPrice && listings[prop].float > minFloat && listings[prop].float < maxFloat)
+            if (listings[prop].price+listings[prop].fee < maxPrice && listings[prop].float > minFloat && listings[prop].float < maxFloat)
                 buyItemFromMarket(prop);
         refreshListings();
         loop = setInterval(() => refreshListings(), interval);
     } else {
         let queue = [];
         for(const prop in listings)
-            if (listings[prop].price*1.15 < maxPrice && listings[prop].float > minFloat && listings[prop].float < maxFloat)
+            if (listings[prop].price+listings[prop].fee < maxPrice && listings[prop].float > minFloat && listings[prop].float < maxFloat)
                 queue.push(prop);
         loop = setInterval(() => refreshListingsV2(), interval);
         refreshListingsV2(queue);
     }
     
 }
-
+/**
+ * 
+ * @param {string} listingId 
+ */
 function buyItemFromMarket(listingId) {
     if (bought) return;
     console.log(listings[listingId]);
@@ -102,7 +108,10 @@ function buyItemFromMarket(listingId) {
     });
     clearInterval(loop); bought = true;
 }
-
+/**
+ * 
+ * @param {string[]} queue 
+ */
 function buyItemFromMarketV2(queue) {
     if(queue.length == 0) return;
     buyItemFromMarket(queue.reduce(compare));
@@ -169,8 +178,12 @@ function addExtensionDiv() {
 
 function injectScript() {
     window.addEventListener("message", function(event) {
-        if (event.data.type && event.data.type == "FROM_PAGE")
+        if (event.data.type && event.data.type == "FROM_PAGE_EXT") {
             transactionData = event.data.transactionData;
+            urlParams = event.data.urlParams;
+            urlParams.count = listingsCount;
+            searchParams = new URLSearchParams(urlParams).toString();
+        }
     });
 
     var script = document.createElement('script');

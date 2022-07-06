@@ -1,5 +1,13 @@
 window.postMessage({ 
-    type: "FROM_PAGE",
+    type: "FROM_PAGE_EXT",
+    urlParams: {
+        count: 0,
+        country: g_strCountryCode,
+        currency: g_rgWalletInfo['wallet_currency'],
+        language: g_strLanguage,
+        query: "",
+        start: 0
+    },
     transactionData: {
         sessionid: g_sessionID, 
         currency: g_rgWalletInfo['wallet_currency'],
