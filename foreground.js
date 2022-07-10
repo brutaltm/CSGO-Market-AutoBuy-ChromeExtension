@@ -1,84 +1,108 @@
 console.log("Script executed.");
-let listings = {}, listingsCount = 100, maxPrice = 1850, minFloat = 0.00, maxFloat = 0.12, bought = false, delay = 2000;
+let listings = {}, listingsCount = 100, maxPrice = 10, minFloat = 0.00, maxFloat = 0.12, bought = false;
 let buyQueue = [], compare = (prev,curr) => listings[curr].price < listings[prev].price ? curr : prev;
-var loop;
+let interval = 1000, lastModifiedDate = new Date(0), refresh = refreshListingsV2;
 addExtensionDiv();
 injectScript();
 
-function refreshListings() {
+function refreshListings(queue = []) {
     console.log("Refreshing listings...");
-    fetch(`${window.location.href}/render/?${searchParams}`)
-    .then(resp => resp.json()).then(json => {
-        for(const prop in json.listinginfo) {
-            if (!listings[prop] && json.listinginfo[prop].converted_price+json.listinginfo[prop].converted_fee < maxPrice) {
-                chrome.runtime.sendMessage({
-                    inspectLink: json.listinginfo[prop].asset.market_actions[0].link.replace(/%listingid%|%assetid%/gi,m => m.charAt(1) == 'l' ? prop : json.listinginfo[prop].asset.id)
-                }, resp => {
-                    listings[prop] = { float: resp.floatvalue, price: json.listinginfo[prop].converted_price, fee: json.listinginfo[prop].converted_fee };
-                    if (resp.floatvalue > minFloat && resp.floatvalue < maxFloat)
-                        buyItemFromMarket(prop);
-                });
-            }
-        }
-    });
-}
-/**
- * 
- * @param {string[]} queue 
- */
-function refreshListingsV2(queue = []) {
-    console.log("Refreshing listings...");
-    fetch(`${window.location.href}/render/?${searchParams}`)
-    .then(resp => resp.json()).then(json => {
-        let promises = [];
-        for(const prop in json.listinginfo) {
-            if (!listings[prop] && json.listinginfo[prop].converted_price+json.listinginfo[prop].converted_fee < maxPrice) {
-                promises.push(new Promise(resolve => {
-                    chrome.runtime.sendMessage({
-                        inspectLink: json.listinginfo[prop].asset.market_actions[0].link.replace(/%listingid%|%assetid%/gi,m => m.charAt(1) == 'l' ? prop : json.listinginfo[prop].asset.id)
-                    }, resp => {
-                        listings[prop] = { float: resp.floatvalue, price: json.listinginfo[prop].converted_price, fee: json.listinginfo[prop].converted_fee };
-                        if (resp.floatvalue > minFloat && resp.floatvalue < maxFloat)
-                            queue.push(prop);
-                        resolve();
-                    });
-                }));
-            }
-        }
-        Promise.all(promises).then(val => buyItemFromMarketV2(queue));
+    return new Promise(resolve => {
+        let modifiedDate;
+        fetch(`${window.location.href}/render/?${searchParams}`,{cache: "no-cache"})
+        .then(resp => {
+            modifiedDate = new Date(resp.headers.get('Last-Modified'));
+            if (modifiedDate > lastModifiedDate) {
+                lastModifiedDate = modifiedDate
+                return resp.json();
+            } else return null;
+        }).then(json => {
+            let promises = [];
+            if (json) {
+                for(const prop in json.listinginfo)
+                    if (!listings[prop] && json.listinginfo[prop].converted_price+json.listinginfo[prop].converted_fee < maxPrice)
+                        promises.push(getFloatInfo(prop,json.listinginfo[prop],queue).then(() => {
+                            if (queue.length > 0) {
+                                buyItemFromMarket(prop);
+                                resolve(modifiedDate);
+                            }
+                        }));
+            } 
+            Promise.all(promises).then(() => resolve(modifiedDate));
+        });
     });
 }
 
+function refreshListingsV2(queue = []) {
+    console.log("Refreshing listings...");
+    return new Promise(resolve => {
+        let modifiedDate;
+        fetch(`${window.location.href}/render/?${searchParams}`,{cache: "no-cache"})
+        .then(resp => {
+            modifiedDate = new Date(resp.headers.get('Last-Modified'));
+            if (modifiedDate > lastModifiedDate) {
+                lastModifiedDate = modifiedDate
+                return resp.json();
+            } else return null;
+        }).then(json => {
+            let promises = [];
+            if (json) {
+                for(const prop in json.listinginfo)
+                    if (!listings[prop] && json.listinginfo[prop].converted_price+json.listinginfo[prop].converted_fee < maxPrice)
+                        promises.push(getFloatInfo(prop,json.listinginfo[prop],queue));
+            } 
+            Promise.all(promises).then(val => buyItemFromMarketV2(queue)).then(() => resolve(modifiedDate));
+        });
+    });
+}
+
+function getFloatInfo(prop, steamInfo, queue) {
+    return new Promise(resolve => {
+        chrome.runtime.sendMessage({
+            inspectLink: steamInfo.asset.market_actions[0].link.replace(/%listingid%|%assetid%/gi,m => m.charAt(1) == 'l' ? prop : steamInfo.asset.id)
+        }, resp => {
+            listings[prop] = { float: resp.floatvalue, price: steamInfo.converted_price, fee: steamInfo.converted_fee };
+            if (resp.floatvalue > minFloat && resp.floatvalue < maxFloat)
+                queue.push(prop);
+            resolve();
+        });
+    });
+}
+
+async function startSearchLoop(queue = []) {
+    let modifiedDate = await refresh(queue);
+    if(bought) return;
+    let timeToWait = modifiedDate.getTime() + 90000 - new Date().getTime();
+    timeToWait = timeToWait > 0 ? timeToWait : interval;
+    setTimeout(startSearchLoop,timeToWait);
+}
+
 async function startInterval() {
-    if (loop) clearInterval(loop);
-    let interval = await new Promise(resolve => chrome.storage.sync.get(["listingsRefreshDelay"], res => resolve(res["listingsRefreshDelay"])));
-    bought = false;
     minFloat = parseFloat(document.getElementById("minFloatInput").value);
     maxFloat = parseFloat(document.getElementById("maxFloatInput").value);
     maxPrice = 100*parseFloat(document.getElementById("maxPriceInput").value);
+    interval = await new Promise(resolve => chrome.storage.sync.get(["listingsRefreshDelay"], res => resolve(res["listingsRefreshDelay"])));
+    bought = false;
 
     document.getElementById("currSearch").innerHTML = `<span style="color: LightSeaGreen">Currently searching for '${document.querySelector('input[name="extWhichToBuy"]:checked').value}'</span>`
 
     if(document.querySelector('input[name="extWhichToBuy"]:checked').value == "first") {
-        for(const prop in listings)
+        for(const prop in listings) {
             if (listings[prop].price+listings[prop].fee < maxPrice && listings[prop].float > minFloat && listings[prop].float < maxFloat)
-                buyItemFromMarket(prop);
-        refreshListings();
-        loop = setInterval(() => refreshListings(), interval);
-    } else {
-        let queue = [];
-        for(const prop in listings)
-            if (listings[prop].price+listings[prop].fee < maxPrice && listings[prop].float > minFloat && listings[prop].float < maxFloat)
-                queue.push(prop);
-        loop = setInterval(() => refreshListingsV2(), interval);
-        refreshListingsV2(queue);
+                {buyItemFromMarket(prop); return;}
+        }
+        startSearchLoop(); return;
     }
-    
+
+    let queue = [];
+    for(const prop in listings)
+        if (listings[prop].price+listings[prop].fee < maxPrice && listings[prop].float > minFloat && listings[prop].float < maxFloat)
+            queue.push(prop);
+
+    startSearchLoop(queue);
+
 }
-/**
- * 
- * @param {string} listingId 
- */
+
 function buyItemFromMarket(listingId) {
     if (bought) return;
     console.log(listings[listingId]);
@@ -108,10 +132,7 @@ function buyItemFromMarket(listingId) {
     });
     clearInterval(loop); bought = true;
 }
-/**
- * 
- * @param {string[]} queue 
- */
+
 function buyItemFromMarketV2(queue) {
     if(queue.length == 0) return;
     buyItemFromMarket(queue.reduce(compare));
@@ -171,8 +192,10 @@ function addExtensionDiv() {
                 r.addEventListener("click",() => compare = (prev,curr) => listings[curr].float > listings[prev].float ? curr : prev);
                 break;
             default:
-                r.addEventListener("click",() => compare = (prev,curr) => curr);
+                r.addEventListener("click",() => refresh = refreshListings);
+                return;
         }
+        r.addEventListener("click",() => refresh = refreshListingsV2);
     });
 }
 
